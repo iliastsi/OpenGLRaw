@@ -10,6 +10,7 @@ import qualified System.Directory as D
 import qualified System.Environment as E
 import qualified System.FilePath as F
 import qualified System.IO as SI
+import qualified Text.Printf as TP
 import MangledRegistry
 import ManPages
 
@@ -166,14 +167,37 @@ printForeign sigMap = do
     SI.hPutStrLn h ""
     mapM_ (SI.hPutStrLn h . uncurry makeImportDynamic) (M.assocs sigMap)
 
+splitEvery :: Int -> [e] -> [[e]]
+splitEvery i ls = map (take i) ((splitter ls) (:) [])
+  where
+    splitter [] _ n = n
+    splitter l c n  = l `c` splitter (drop i l) c n
+
 printFunctions :: API -> Registry -> M.Map String String -> IO ()
 printFunctions api registry sigMap = do
   let comment =
         ["All raw functions from the",
          "<http://www.opengl.org/registry/ OpenGL registry>."]
+      cmds = splitEvery 40 $ M.toAscList . commands $ registry
+      mnames = [["Functions", "F" ++ TP.printf "%.2d" (i::Int)] |
+                i <- [1 .. (length cmds)]]
   startModule ["Functions"] Nothing comment $ \moduleName h -> do
     SI.hPutStrLn h $ "module " ++ moduleName ++ " ("
-    SI.hPutStrLn h . separate unCommandName . M.keys . commands $ registry
+    SI.hPutStrLn h . separate ((++) "module " . moduleNameFor) $ mnames
+    SI.hPutStrLn h ") where"
+    SI.hPutStrLn h ""
+    mapM_ (SI.hPutStrLn h . (++) "import " . moduleNameFor) mnames
+  CM.zipWithM_ (printSubFunctions api registry sigMap) mnames cmds
+
+printSubFunctions :: API -> Registry -> M.Map String String ->
+                     [String] -> [(CommandName, Command)] -> IO ()
+printSubFunctions api registry sigMap mname cmds = do
+  let comment =
+        ["Raw functions from the",
+         "<http://www.opengl.org/registry/ OpenGL registry>."]
+  startModule mname Nothing comment $ \moduleName h -> do
+    SI.hPutStrLn h $ "module " ++ moduleName ++ " ("
+    SI.hPutStrLn h . separate unCommandName . map fst $ cmds
     SI.hPutStrLn h ") where"
     SI.hPutStrLn h ""
     SI.hPutStrLn h "import Control.Monad.IO.Class ( MonadIO(..) )"
@@ -192,7 +216,7 @@ printFunctions api registry sigMap = do
     SI.hPutStrLn h "throwIfNullFunPtr :: String -> IO (FunPtr a) -> IO (FunPtr a)"
     SI.hPutStrLn h "throwIfNullFunPtr = throwIf (== nullFunPtr) . const"
     SI.hPutStrLn h ""
-    mapM_ (SI.hPutStrLn h . showCommand api registry sigMap) (M.elems (commands registry))
+    mapM_ (SI.hPutStrLn h . showCommand api registry sigMap . snd) cmds
 
 type ExtensionParts = ([TypeName], [Enum'], [Command])
 type ExtensionModule = (ExtensionName, ExtensionName, ExtensionParts)
